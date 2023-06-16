@@ -152,6 +152,60 @@ void pack(char* archive_name, char* source_dir) {
     fclose_safe(archive);
 }
 
+void add(char* archive_name, char* target_filename) {
+    FILE *archive = fopen(archive_name, "r+b");
+    if (archive == NULL) {
+        fprintf(stderr, "Error: Unable to open archive file\n");
+        return;
+    }
+
+    if (file_exists_in_archive(archive, target_filename)) {
+        fprintf(stderr, "Error: File %s already exists in the archive\n", target_filename);
+        fclose_safe(archive);
+        return;
+    }
+
+    struct file_header header;
+    struct stat st;
+    char filepath[MAX_PATH_LENGTH + 1];
+    snprintf(filepath, sizeof(filepath), "%s", target_filename);
+
+    if (stat(filepath, &st) != 0) {
+        fprintf(stderr, "Error: Unable to determine the size of file %s\n", target_filename);
+        fclose_safe(archive);
+        return;
+    }
+
+    strcpy(header.filename, basename(target_filename));
+    header.filesize = st.st_size;
+
+    fwrite(&header, sizeof(struct file_header), 1, archive);
+
+    FILE *source_file = fopen(filepath, "rb");
+    if (source_file == NULL) {
+        fprintf(stderr, "Error: Unable to open source file %s\n", target_filename);
+        fclose_safe(archive);
+        return;
+    }
+
+    char *buffer = malloc(header.filesize);
+    if (buffer == NULL) {
+        fprintf(stderr, "Error: Unable to allocate memory for file %s\n", target_filename);
+        fclose_safe(source_file);
+        fclose_safe(archive);
+        return;
+    }
+
+    fread(buffer, header.filesize, 1, source_file);
+    fwrite(buffer, header.filesize, 1, archive);
+
+    free(buffer);
+    fclose_safe(source_file);
+    fclose_safe(archive);
+
+    printf("File %s added to the archive.\n", target_filename);
+}
+
 void del(char* archive_name, char* target_filename) {
     char temp_archive_name[] = "temp.arcx";
 
@@ -200,10 +254,10 @@ void del(char* archive_name, char* target_filename) {
     if (file_found) {
         remove(archive_name);
         rename(temp_archive_name, archive_name);
-        printf("File %s deleted.\n", target_filename);
+        printf("File %s deleted from the archive.\n", target_filename);
     } else {
         remove(temp_archive_name);
-        printf("No such file %s exists.\n", target_filename);
+        printf("No such file %s exists in the archive.\n", target_filename);
     }
 }
 
@@ -230,7 +284,7 @@ void list(char* archive_name) {
     if (ferror(archive)) {
         fprintf(stderr, "Error: Failed to read from archive file\n");
     } else {
-        printf("Total %d file(s) exist.\n", total_files);
+        printf("Total %d file(s) exist in the archive.\n", total_files);
     }
 
     fclose_safe(archive);
@@ -264,7 +318,7 @@ int file_exists_in_archive(FILE *archive, char *filename) {
 
     struct file_header tmp_header;
     while (fread(&tmp_header, sizeof(struct file_header), 1, archive) > 0) {
-        if (strncmp(tmp_header.filename, filename, MAX_PATH_LENGTH) == 0) {
+        if (strcmp(tmp_header.filename, filename) == 0) {
             return 1;
         }
         fseek(archive, tmp_header.filesize, SEEK_CUR);
@@ -278,16 +332,60 @@ void fclose_safe(FILE *file) {
     }
 }
 
-int main() {
-    char archive_name[] = "archive.arcx";
-    char source_dir[] = "source";
-    char dest_dir[] = "destination";
-    char target_filename[] = "file.txt";
+int main(int argc, char *argv[]) {
+    if (argc < 3) {
+        fprintf(stderr, "Error: Insufficient arguments\n");
+        fprintf(stderr, "Usage: %s <command> <archive-filename> [additional arguments]\n", argv[0]);
+        return 1;
+    }
 
-    pack(archive_name, source_dir);
-    unpack(archive_name, dest_dir);
-    del(archive_name, target_filename);
-    list(archive_name);
+    char *command = argv[1];
+    char *archive_name = argv[2];
+
+    if (strcmp(command, "pack") == 0) {
+        if (argc != 4) {
+            fprintf(stderr, "Error: Incorrect number of arguments for command 'pack'\n");
+            fprintf(stderr, "Usage: %s pack <archive-filename> <src-directory>\n", argv[0]);
+            return 1;
+        }
+        char *source_dir = argv[3];
+        pack(archive_name, source_dir);
+    } else if (strcmp(command, "unpack") == 0) {
+        if (argc != 4) {
+            fprintf(stderr, "Error: Incorrect number of arguments for command 'unpack'\n");
+            fprintf(stderr, "Usage: %s unpack <archive-filename> <dest-directory>\n", argv[0]);
+            return 1;
+        }
+        char *dest_dir = argv[3];
+        unpack(archive_name, dest_dir);
+    } else if (strcmp(command, "add") == 0) {
+        if (argc != 4) {
+            fprintf(stderr, "Error: Incorrect number of arguments for command 'add'\n");
+            fprintf(stderr, "Usage: %s add <archive-filename> <target-filename>\n", argv[0]);
+            return 1;
+        }
+        char *target_filename = argv[3];
+        add(archive_name, target_filename);
+    } else if (strcmp(command, "del") == 0) {
+        if (argc != 4) {
+            fprintf(stderr, "Error: Incorrect number of arguments for command 'del'\n");
+            fprintf(stderr, "Usage: %s del <archive-filename> <target-filename>\n", argv[0]);
+            return 1;
+        }
+        char *target_filename = argv[3];
+        del(archive_name, target_filename);
+    } else if (strcmp(command, "list") == 0) {
+        if (argc != 3) {
+            fprintf(stderr, "Error: Incorrect number of arguments for command 'list'\n");
+            fprintf(stderr, "Usage: %s list <archive-filename>\n", argv[0]);
+            return 1;
+        }
+        list(archive_name);
+    } else {
+        fprintf(stderr, "Error: Invalid command '%s'\n", command);
+        fprintf(stderr, "Usage: %s <command> <archive-filename> [additional arguments]\n", argv[0]);
+        return 1;
+    }
 
     return 0;
 }
