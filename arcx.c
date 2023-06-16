@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #include <libgen.h>
 #include <errno.h>
+#include <limits.h>
 
 #define MAX_PATH_LENGTH 255
 
@@ -13,18 +14,16 @@ struct file_header {
     long filesize;
 };
 
-void pack(char* archive_name, char* source_dir);
 void unpack(char* archive_name, char* dest_dir);
-void add(char* archive_name, char* target_filename);
+void pack(char* archive_name, char* source_dir);
 void del(char* archive_name, char* target_filename);
 void list(char* archive_name);
 
 int copy_data(FILE *src, FILE *dest, long size);
 int file_exists_in_archive(FILE *archive, char *filename);
 
-
 void unpack(char* archive_name, char* dest_dir) {
-    FILE *archive = fopen(archive_name, "r");
+    FILE *archive = fopen(archive_name, "rb");
     if (archive == NULL) {
         fprintf(stderr, "Error: Unable to open archive file\n");
         return;
@@ -40,11 +39,11 @@ void unpack(char* archive_name, char* dest_dir) {
     }
 
     struct file_header header;
-    while(fread(&header, sizeof(struct file_header), 1, archive) > 0) {
-        char filepath[255];
-        sprintf(filepath, "%s/%s", dest_dir, header.filename);
+    while (fread(&header, sizeof(struct file_header), 1, archive) > 0) {
+        char filepath[MAX_PATH_LENGTH + 1];
+        snprintf(filepath, sizeof(filepath), "%s/%s", dest_dir, header.filename);
 
-        FILE *dest_file = fopen(filepath, "w");
+        FILE *dest_file = fopen(filepath, "wb");
         if (dest_file == NULL) {
             fprintf(stderr, "Error: Unable to open destination file %s. Error code: %d\n", filepath, errno);
             fclose(archive);
@@ -82,7 +81,6 @@ void unpack(char* archive_name, char* dest_dir) {
     fclose(archive);
 }
 
-
 void pack(char* archive_name, char* source_dir) {
     DIR *d;
     struct dirent *dir;
@@ -92,7 +90,7 @@ void pack(char* archive_name, char* source_dir) {
         return;
     }
 
-    FILE *archive = fopen(archive_name, "w");
+    FILE *archive = fopen(archive_name, "wb");
     if (archive == NULL) {
         fprintf(stderr, "Error: Unable to open archive file\n");
         closedir(d);
@@ -105,7 +103,7 @@ void pack(char* archive_name, char* source_dir) {
             file_count++;
             struct file_header header;
 
-            if (strlen(dir->d_name) >= sizeof(header.filename)) {
+            if (strlen(dir->d_name) >= MAX_PATH_LENGTH) {
                 fprintf(stderr, "Error: File name %s is too long\n", dir->d_name);
                 continue;
             }
@@ -128,7 +126,7 @@ void pack(char* archive_name, char* source_dir) {
 
             fwrite(&header, sizeof(struct file_header), 1, archive);
 
-            FILE *source_file = fopen(filepath, "r");
+            FILE *source_file = fopen(filepath, "rb");
             if (source_file == NULL) {
                 fprintf(stderr, "Error: Unable to open source file %s\n", dir->d_name);
                 continue;
@@ -158,13 +156,13 @@ void pack(char* archive_name, char* source_dir) {
 void del(char* archive_name, char* target_filename) {
     char temp_archive_name[] = "temp.arcx";
 
-    FILE *archive = fopen(archive_name, "r");
+    FILE *archive = fopen(archive_name, "rb");
     if (archive == NULL) {
         fprintf(stderr, "Error: Unable to open archive file\n");
         return;
     }
 
-    FILE *temp_archive = fopen(temp_archive_name, "w");
+    FILE *temp_archive = fopen(temp_archive_name, "wb");
     if (temp_archive == NULL) {
         fprintf(stderr, "Error: Unable to open temporary archive file\n");
         fclose(archive);
@@ -173,8 +171,8 @@ void del(char* archive_name, char* target_filename) {
 
     int file_found = 0;
     struct file_header header;
-    while(fread(&header, sizeof(struct file_header), 1, archive) > 0) {
-        if(strcmp(header.filename, target_filename) == 0) {
+    while (fread(&header, sizeof(struct file_header), 1, archive) > 0) {
+        if (strcmp(header.filename, target_filename) == 0) {
             file_found = 1;
             fseek(archive, header.filesize, SEEK_CUR);
             continue;
@@ -210,9 +208,8 @@ void del(char* archive_name, char* target_filename) {
     }
 }
 
-
 void list(char* archive_name) {
-    FILE *archive = fopen(archive_name, "r");
+    FILE *archive = fopen(archive_name, "rb");
     if (archive == NULL) {
         fprintf(stderr, "Error: Unable to open archive file\n");
         return;
@@ -220,7 +217,7 @@ void list(char* archive_name) {
 
     int total_files = 0;
     struct file_header header;
-    while(fread(&header, sizeof(struct file_header), 1, archive) > 0) {
+    while (fread(&header, sizeof(struct file_header), 1, archive) > 0) {
         printf("%s %ld bytes\n", header.filename, header.filesize);
         total_files++;
 
@@ -240,21 +237,20 @@ void list(char* archive_name) {
     fclose(archive);
 }
 
-
 int copy_data(FILE *src, FILE *dest, long size) {
     char *buffer = malloc(size);
-    if(!buffer) {
+    if (!buffer) {
         perror("Error: Unable to allocate buffer");
         return 0;
     }
 
-    if(fread(buffer, size, 1, src) != 1) {
+    if (fread(buffer, size, 1, src) != 1) {
         perror("Error: Unable to read source data");
         free(buffer);
         return 0;
     }
 
-    if(fwrite(buffer, size, 1, dest) != 1) {
+    if (fwrite(buffer, size, 1, dest) != 1) {
         perror("Error: Unable to write destination data");
         free(buffer);
         return 0;
@@ -268,11 +264,17 @@ int file_exists_in_archive(FILE *archive, char *filename) {
     rewind(archive);
 
     struct file_header tmp_header;
-    while(fread(&tmp_header, sizeof(struct file_header), 1, archive) > 0) {
-        if(strncmp(tmp_header.filename, filename, MAX_PATH_LENGTH) == 0) {
+    while (fread(&tmp_header, sizeof(struct file_header), 1, archive) > 0) {
+        if (strncmp(tmp_header.filename, filename, MAX_PATH_LENGTH) == 0) {
             return 1;
         }
         fseek(archive, tmp_header.filesize, SEEK_CUR);
     }
     return 0;
 }
+void fclose_safe(FILE *file) {
+    if (file != NULL) {
+        fclose(file);
+    }
+}
+
