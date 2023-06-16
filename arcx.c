@@ -5,7 +5,6 @@
 #include <sys/stat.h>
 #include <libgen.h>
 #include <errno.h>
-#include <limits.h>
 
 #define MAX_PATH_LENGTH 255
 
@@ -14,13 +13,16 @@ struct file_header {
     long filesize;
 };
 
-void unpack(char* archive_name, char* dest_dir);
 void pack(char* archive_name, char* source_dir);
+void unpack(char* archive_name, char* dest_dir);
+void add(char* archive_name, char* target_filename);
 void del(char* archive_name, char* target_filename);
 void list(char* archive_name);
 
 int copy_data(FILE *src, FILE *dest, long size);
 int file_exists_in_archive(FILE *archive, char *filename);
+
+void fclose_safe(FILE *file);
 
 void unpack(char* archive_name, char* dest_dir) {
     FILE *archive = fopen(archive_name, "rb");
@@ -33,7 +35,7 @@ void unpack(char* archive_name, char* dest_dir) {
     if (stat(dest_dir, &st) == -1) {
         if (mkdir(dest_dir, 0700)) {
             fprintf(stderr, "Error: Unable to create destination directory. Error code: %d\n", errno);
-            fclose(archive);
+            fclose_safe(archive);
             return;
         }
     }
@@ -46,23 +48,23 @@ void unpack(char* archive_name, char* dest_dir) {
         FILE *dest_file = fopen(filepath, "wb");
         if (dest_file == NULL) {
             fprintf(stderr, "Error: Unable to open destination file %s. Error code: %d\n", filepath, errno);
-            fclose(archive);
+            fclose_safe(archive);
             return;
         }
 
         char *buffer = malloc(header.filesize);
         if (buffer == NULL) {
             fprintf(stderr, "Error: Unable to allocate memory for file content buffer\n");
-            fclose(dest_file);
-            fclose(archive);
+            fclose_safe(dest_file);
+            fclose_safe(archive);
             return;
         }
 
         if (fread(buffer, header.filesize, 1, archive) <= 0) {
             fprintf(stderr, "Error: Unable to read file content for %s\n", header.filename);
             free(buffer);
-            fclose(dest_file);
-            fclose(archive);
+            fclose_safe(dest_file);
+            fclose_safe(archive);
             return;
         }
 
@@ -71,14 +73,14 @@ void unpack(char* archive_name, char* dest_dir) {
         }
 
         free(buffer);
-        fclose(dest_file);
+        fclose_safe(dest_file);
     }
 
     if (ferror(archive)) {
         fprintf(stderr, "Error: Failed to read from archive file\n");
     }
 
-    fclose(archive);
+    fclose_safe(archive);
 }
 
 void pack(char* archive_name, char* source_dir) {
@@ -111,11 +113,8 @@ void pack(char* archive_name, char* source_dir) {
             strcpy(header.filename, dir->d_name);
 
             struct stat st;
-            char filepath[PATH_MAX];
-            if (snprintf(filepath, sizeof(filepath), "%s/%s", source_dir, dir->d_name) >= sizeof(filepath)) {
-                fprintf(stderr, "Error: File path %s/%s is too long\n", source_dir, dir->d_name);
-                continue;
-            }
+            char filepath[MAX_PATH_LENGTH + 1];
+            snprintf(filepath, sizeof(filepath), "%s/%s", source_dir, dir->d_name);
 
             if (stat(filepath, &st) != 0) {
                 fprintf(stderr, "Error: Unable to determine the size of file %s\n", dir->d_name);
@@ -135,7 +134,7 @@ void pack(char* archive_name, char* source_dir) {
             char *buffer = malloc(header.filesize);
             if (buffer == NULL) {
                 fprintf(stderr, "Error: Unable to allocate memory for file %s\n", dir->d_name);
-                fclose(source_file);
+                fclose_safe(source_file);
                 continue;
             }
 
@@ -143,14 +142,14 @@ void pack(char* archive_name, char* source_dir) {
             fwrite(buffer, header.filesize, 1, archive);
 
             free(buffer);
-            fclose(source_file);
+            fclose_safe(source_file);
         }
     }
 
     printf("%d file(s) archived.\n", file_count);
 
     closedir(d);
-    fclose(archive);
+    fclose_safe(archive);
 }
 
 void del(char* archive_name, char* target_filename) {
@@ -165,7 +164,7 @@ void del(char* archive_name, char* target_filename) {
     FILE *temp_archive = fopen(temp_archive_name, "wb");
     if (temp_archive == NULL) {
         fprintf(stderr, "Error: Unable to open temporary archive file\n");
-        fclose(archive);
+        fclose_safe(archive);
         return;
     }
 
@@ -183,8 +182,8 @@ void del(char* archive_name, char* target_filename) {
         char *buffer = malloc(header.filesize);
         if (buffer == NULL) {
             fprintf(stderr, "Error: Unable to allocate memory for file %s\n", header.filename);
-            fclose(archive);
-            fclose(temp_archive);
+            fclose_safe(archive);
+            fclose_safe(temp_archive);
             remove(temp_archive_name);
             return;
         }
@@ -195,8 +194,8 @@ void del(char* archive_name, char* target_filename) {
         free(buffer);
     }
 
-    fclose(archive);
-    fclose(temp_archive);
+    fclose_safe(archive);
+    fclose_safe(temp_archive);
 
     if (file_found) {
         remove(archive_name);
@@ -223,7 +222,7 @@ void list(char* archive_name) {
 
         if (fseek(archive, header.filesize, SEEK_CUR)) {
             fprintf(stderr, "Error: Unable to skip file content for %s\n", header.filename);
-            fclose(archive);
+            fclose_safe(archive);
             return;
         }
     }
@@ -234,7 +233,7 @@ void list(char* archive_name) {
         printf("Total %d file(s) exist.\n", total_files);
     }
 
-    fclose(archive);
+    fclose_safe(archive);
 }
 
 int copy_data(FILE *src, FILE *dest, long size) {
@@ -272,9 +271,23 @@ int file_exists_in_archive(FILE *archive, char *filename) {
     }
     return 0;
 }
+
 void fclose_safe(FILE *file) {
     if (file != NULL) {
         fclose(file);
     }
 }
 
+int main() {
+    char archive_name[] = "archive.arcx";
+    char source_dir[] = "source";
+    char dest_dir[] = "destination";
+    char target_filename[] = "file.txt";
+
+    pack(archive_name, source_dir);
+    unpack(archive_name, dest_dir);
+    del(archive_name, target_filename);
+    list(archive_name);
+
+    return 0;
+}
